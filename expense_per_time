@@ -1,5 +1,6 @@
-import sys
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox
+import sys, sqlite3
+from PyQt5.QtWidgets import QComboBox, QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox, QTextEdit
+from PyQt5.QtCore import QDate
 from datetime import datetime, timedelta
 
 class ExpenseTracker(QWidget):
@@ -7,11 +8,29 @@ class ExpenseTracker(QWidget):
         super().__init__()
 
         self.init_ui()
+        self.update_expenses_textedit()  # Display expenses upon application launch
 
     def init_ui(self):
+        try:
+            # Connect to SQLite database
+            self.conn = sqlite3.connect('expenses.db')
+            self.cur = self.conn.cursor()
+
+            # Create expenses table if it doesn't exist
+            self.cur.execute('''CREATE TABLE IF NOT EXISTS expenses (
+                                    id INTEGER PRIMARY KEY,
+                                    category TEXT,
+                                    expense REAL, 
+                                    year INTEGER,
+                                    month INTEGER,
+                                    day INTEGER
+                                )''')
+        except sqlite3.Error as e:
+            print("SQLite error:", e)
+            
         self.setWindowTitle('Expense Tracker')
 
-        # Create labels, line edits, and buttons for each expense category.
+        # Create labels, line edits, and buttons for each expense category 
         self.labels = []
         self.line_edits = []
 
@@ -28,35 +47,92 @@ class ExpenseTracker(QWidget):
             self.layout.addWidget(label)
             self.layout.addWidget(line_edit)
 
-        self.time_span_label = QLabel('Select Time Span:')
-        self.time_span_combo = QComboBox()
-        self.time_span_combo.addItems(['Year', 'Month', 'Week'])
-        self.layout.addWidget(self.time_span_label)
-        self.layout.addWidget(self.time_span_combo)
-
         self.save_button = QPushButton('Save')
         self.save_button.clicked.connect(self.save_expenses)
         self.layout.addWidget(self.save_button)
 
+        self.year_label = QLabel('Select Year:')
+        self.year_combo = QComboBox()
+        self.year_combo.addItems([str(year) for year in range(2000, QDate.currentDate().year() + 1)])
+        self.layout.addWidget(self.year_label)
+        self.layout.addWidget(self.year_combo)
+
+        self.month_label = QLabel('Select Month:')
+        self.month_combo = QComboBox()
+        self.month_combo.addItems([QDate.longMonthName(month) for month in range(1, 13)])
+        self.layout.addWidget(self.month_label)
+        self.layout.addWidget(self.month_combo)
+
+        self.day_label = QLabel('Select Day:')
+        self.day_combo = QComboBox()
+        self.layout.addWidget(self.day_label)
+        self.layout.addWidget(self.day_combo)
+        
+        
+        self.expenses_textedit = QTextEdit()
+        self.expenses_textedit.setReadOnly(True)
+        self.layout.addWidget(self.expenses_textedit)
+ 
+
+        # Connect signal-slot for updating day combobox options
+        self.year_combo.currentIndexChanged.connect(self.update_day_combo_options)
+        self.month_combo.currentIndexChanged.connect(self.update_day_combo_options)
+
+        # Update day combobox options initially
+        self.update_day_combo_options()
+        
         self.setLayout(self.layout)
 
+    def update_day_combo_options(self):
+        # Get the selected year and month
+        selected_year = int(self.year_combo.currentText())
+        selected_month = self.month_combo.currentIndex() + 1  # Month indices start from 1
+        
+        # Determine the maximum number of days for the selected month and year
+        max_days = QDate(selected_year, selected_month, 1).daysInMonth()
+
+        # Clear existing options and add new options for days
+        self.day_combo.clear()
+        self.day_combo.addItems([str(day) for day in range(1, max_days + 1)])
+        
+        
     def save_expenses(self):
-        # Retrieve the entered expenses for each category and save them
+         # Retrieve the entered expenses for each category and save them
         expenses = {}
-        for label, line_edit in zip(self.labels, self.line_edits):
-            category = label.text().split(':')[0]
-            expense = line_edit.text()
-            expenses[category] = expense
+        try:
+            for label, line_edit in zip(self.labels, self.line_edits):
+                category = label.text().split(':')[0]
+                expense_text = line_edit.text()
+                year = int(self.year_combo.currentText())
+                month = self.month_combo.currentIndex() + 1
+                day = int(self.day_combo.currentText())
+                
+                # Check if the expense text is empty or contains non-numeric characters
+                if not expense_text or not expense_text.replace('.', '').isdigit():
+                    raise ValueError("Invalid expense value")
+                
+                expense = float(expense_text)  # Convert expense to float
+                expenses[category] = expense
 
-        time_span = self.time_span_combo.currentText()
+                # Insert expense into the database
+                self.cur.execute("INSERT INTO expenses (category, expense, year, month, day) VALUES (?, ?, ?, ?, ?)",
+                                (category, expense, year, month, day))
+                self.conn.commit()
 
-        # Calculate start and end dates based on the selected time span
-        current_date = datetime.now()
-        start_date, end_date = self.calculate_time_span(current_date, time_span)
+            print("Expenses saved:", expenses)
 
-        print(f"Expenses saved for {time_span.lower()} from {start_date} to {end_date}:", expenses)
-        # For demonstration, you can save this data to a file or database
+            # Update expenses text edit to display saved expenses
+            self.update_expenses_textedit()
 
+        except sqlite3.Error as e:
+            print("SQLite error:", e)
+            self.show_error_message("SQLite Error", str(e))
+        except ValueError as e:
+            print("Value error:", e)
+            self.show_error_message("Value Error", str(e))
+
+            
+            
     def calculate_time_span(self, current_date, time_span):
         if time_span == 'Year':
             start_date = current_date.replace(month=1, day=1)
@@ -69,8 +145,48 @@ class ExpenseTracker(QWidget):
             end_date = start_date + timedelta(days=6)
         
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
+    
+    def update_expenses_textedit(self):
+        try:
+            # Retrieve expenses from the database
+            self.cur.execute("SELECT * FROM expenses")
+            rows = self.cur.fetchall()
 
+            # Sort fetched rows based on date
+            sorted_rows = sorted(rows, key=lambda row: (row[3], row[4], row[5]))
+            
+            # Format expenses for display in the text edit
+            expenses_str = "Category\tExpense\tDate\n"
+            for row in rows:
+                category = row[1]
+                expense = row[2]
+                year = row[3]
+                month = row[4]
+                day = row[5]
+                
+                date_str = f"{row[3]:04d}-{row[4]:02d}-{row[5]:02d}"  # Format date as YYYY-MM-DD
+                expenses_str += f"{category}\t{expense:.2f}\t{date_str}\n"
+                
+            # Display expenses in the text edit
+            self.expenses_textedit.setPlainText(expenses_str)
 
+        except sqlite3.Error as e:
+            print("SQLite error:", e)
+            self.show_error_message("SQLite Error", str(e))
+            
+            
+    def show_error_message(self, title, message):
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Critical)
+        msg.setWindowTitle(title)
+        msg.setText(message)
+        msg.exec_()
+    
+    def __del__(self):
+        try:
+            self.conn.close()
+        except sqlite3.Error as e:
+            print("SQLite error:", e)
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = ExpenseTracker()

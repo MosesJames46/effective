@@ -1,0 +1,78 @@
+import sys
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox
+from datetime import datetime, timedelta
+
+class ExpenseTracker(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        self.init_ui()
+
+    def init_ui(self):
+        self.setWindowTitle('Expense Tracker')
+
+        # Create labels, line edits, and buttons for each expense category.
+        self.labels = []
+        self.line_edits = []
+
+        categories = ['Gas', 'Food', 'Utilities', 'Entertainment', 'Others']  # Add more categories as needed
+
+        self.layout = QVBoxLayout()
+
+        for category in categories:
+            label = QLabel(category + ':')
+            line_edit = QLineEdit()
+            self.labels.append(label)
+            self.line_edits.append(line_edit)
+
+            self.layout.addWidget(label)
+            self.layout.addWidget(line_edit)
+
+        self.time_span_label = QLabel('Select Time Span:')
+        self.time_span_combo = QComboBox()
+        self.time_span_combo.addItems(['Year', 'Month', 'Week'])
+        self.layout.addWidget(self.time_span_label)
+        self.layout.addWidget(self.time_span_combo)
+
+        self.save_button = QPushButton('Save')
+        self.save_button.clicked.connect(self.save_expenses)
+        self.layout.addWidget(self.save_button)
+
+        self.setLayout(self.layout)
+
+    def save_expenses(self):
+        # Retrieve the entered expenses for each category and save them
+        expenses = {}
+        for label, line_edit in zip(self.labels, self.line_edits):
+            category = label.text().split(':')[0]
+            expense = line_edit.text()
+            expenses[category] = expense
+
+        time_span = self.time_span_combo.currentText()
+
+        # Calculate start and end dates based on the selected time span
+        current_date = datetime.now()
+        start_date, end_date = self.calculate_time_span(current_date, time_span)
+
+        print(f"Expenses saved for {time_span.lower()} from {start_date} to {end_date}:", expenses)
+        # For demonstration, you can save this data to a file or database
+
+    def calculate_time_span(self, current_date, time_span):
+        if time_span == 'Year':
+            start_date = current_date.replace(month=1, day=1)
+            end_date = current_date.replace(month=12, day=31)
+        elif time_span == 'Month':
+            start_date = current_date.replace(day=1)
+            end_date = current_date.replace(day=30)  # Assuming all months have 30 days for simplicity
+        else:  # Week
+            start_date = current_date - timedelta(days=current_date.weekday())
+            end_date = start_date + timedelta(days=6)
+        
+        return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
+
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    window = ExpenseTracker()
+    window.show()
+    sys.exit(app.exec_())
